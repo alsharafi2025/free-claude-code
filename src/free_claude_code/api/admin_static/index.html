@@ -71,6 +71,65 @@
               aria-label="Messaging configuration"
             ></div>
           </section>
+
+          <section id="view-usage" class="admin-view" data-view="usage" hidden>
+            <div id="usageSections"></div>
+            <section class="provider-strip" aria-label="Token usage">
+              <div class="strip-header">
+                <div>
+                  <h3>Token usage</h3>
+                  <p id="usageSince" class="usage-note"></p>
+                </div>
+                <div class="usage-actions">
+                  <button id="usageRefreshButton" class="secondary-button" type="button">Refresh</button>
+                  <button id="usageResetButton" class="secondary-button" type="button">Reset</button>
+                </div>
+              </div>
+              <div id="usageTotals" class="usage-totals"></div>
+            </section>
+            <section class="provider-strip" aria-label="Usage by model">
+              <div class="strip-header">
+                <h3>By model</h3>
+              </div>
+              <div class="usage-table-wrap">
+                <table class="usage-table">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Requests</th>
+                      <th>Failures</th>
+                      <th>Input</th>
+                      <th>Output</th>
+                      <th>Total</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usageModels"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="provider-strip" aria-label="Recent fallbacks">
+              <div class="strip-header">
+                <div>
+                  <h3>Recent fallbacks</h3>
+                  <p class="usage-note">Automatic switches to the next MODEL_FALLBACKS entry when a model fails before output (for example rate limit or exhausted quota).</p>
+                </div>
+              </div>
+              <div class="usage-table-wrap">
+                <table class="usage-table usage-table-text">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>From</th>
+                      <th>To</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usageFallbacks"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
         </div>
       </main>
 

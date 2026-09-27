@@ -27,6 +27,7 @@ from free_claude_code.core.trace import (
     traced_async_stream,
 )
 
+from .cooldown import ModelCooldowns, is_quota_failure
 from .ports import ProviderResolver
 from .routing import (
     ProviderModelTarget,
@@ -34,6 +35,7 @@ from .routing import (
     RoutedMessagesRequest,
     RoutedResponsesRequest,
 )
+from .usage import StreamUsageObserver, UsageLedger
 
 TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
@@ -56,6 +58,9 @@ class ProviderExecutor:
         responses_token_counter: ResponsesTokenCounter = estimate_responses_input_tokens,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
+        usage_ledger: UsageLedger | None = None,
+        cooldowns: ModelCooldowns | None = None,
+        cooldown_seconds: float = 0.0,
     ) -> None:
         if not math.isfinite(progress_timeout_seconds) or progress_timeout_seconds <= 0:
             raise ValueError("progress_timeout_seconds must be finite and positive")
@@ -64,6 +69,9 @@ class ProviderExecutor:
         self._responses_token_counter = responses_token_counter
         self._generation_id = generation_id
         self._log_raw_payloads = log_raw_payloads
+        self._usage_ledger = usage_ledger
+        self._cooldowns = cooldowns
+        self._cooldown_seconds = cooldown_seconds
         self._progress_timeout_seconds = float(progress_timeout_seconds)
 
     def _progress_timeout_failure(
@@ -154,6 +162,31 @@ class ProviderExecutor:
             fields["generation_id"] = self._generation_id
         trace_event(**fields)
 
+    def _trace_cooldown_reordered(
+        self,
+        *,
+        request_id: str,
+        ordered: tuple[ProviderModelTarget, ...],
+        cooling_refs: tuple[str, ...],
+    ) -> None:
+        fields: dict[str, object] = {
+            "stage": "routing",
+            "event": "free_claude_code.model_cooldown.reordered",
+            "source": "application",
+            "request_id": request_id,
+            "ordered_provider_model_refs": [t.provider_model_ref for t in ordered],
+            "cooling_provider_model_refs": list(cooling_refs),
+        }
+        if self._generation_id is not None:
+            fields["generation_id"] = self._generation_id
+        trace_event(**fields)
+        logger.info(
+            "Model cooldown: request_id={} trying={} first; quota-limited={}",
+            request_id,
+            ordered[0].provider_model_ref,
+            ",".join(cooling_refs),
+        )
+
     def stream_messages(
         self,
         routed: RoutedMessagesRequest,
@@ -180,20 +213,15 @@ class ProviderExecutor:
             index: int,
             target: ProviderModelTarget,
         ) -> AsyncIterator[str]:
-            provider = (
-                primary_provider
-                if index == 0
-                else self._provider_resolver(target.provider_id)
-            )
-            request = (
-                primary_request
-                if index == 0
-                else routed.request.model_copy(
+            if target is primary:
+                provider = primary_provider
+                request = primary_request
+            else:
+                provider = self._provider_resolver(target.provider_id)
+                request = routed.request.model_copy(
                     update={"model": target.provider_model},
                     deep=True,
                 )
-            )
-            if index > 0:
                 provider.preflight_messages(request, reasoning=routed.reasoning)
             return provider.stream_messages(
                 request,
@@ -238,20 +266,15 @@ class ProviderExecutor:
             index: int,
             target: ProviderModelTarget,
         ) -> AsyncIterator[str]:
-            provider = (
-                primary_provider
-                if index == 0
-                else self._provider_resolver(target.provider_id)
-            )
-            request = (
-                primary_request
-                if index == 0
-                else routed.request.model_copy(
+            if target is primary:
+                provider = primary_provider
+                request = primary_request
+            else:
+                provider = self._provider_resolver(target.provider_id)
+                request = routed.request.model_copy(
                     update={"model": target.provider_model},
                     deep=True,
                 )
-            )
-            if index > 0:
                 provider.preflight_responses(request, reasoning=routed.reasoning)
             return provider.stream_responses(
                 request,
@@ -301,7 +324,22 @@ class ProviderExecutor:
         """Run one protocol-blind candidate lifecycle after eager preflight."""
 
         primary = resolved.primary
-        candidates = (primary, *resolved.fallbacks)
+        candidates: tuple[ProviderModelTarget, ...] = (primary, *resolved.fallbacks)
+        if self._cooldowns is not None:
+            ordered = tuple(
+                self._cooldowns.order(candidates, lambda t: t.provider_model_ref)
+            )
+            if ordered != candidates:
+                self._trace_cooldown_reordered(
+                    request_id=request_id,
+                    ordered=ordered,
+                    cooling_refs=tuple(
+                        t.provider_model_ref
+                        for t in candidates
+                        if self._cooldowns.is_cooling(t.provider_model_ref)
+                    ),
+                )
+            candidates = ordered
         gateway_model = resolved.original_model
         route_trace: dict[str, object] = {
             "stage": "routing",
@@ -352,6 +390,7 @@ class ProviderExecutor:
                 provider_stream: AsyncIterator[str] | None = None
                 candidate_committed = False
                 candidate_failure: ExecutionFailure | None = None
+                usage = StreamUsageObserver()
                 try:
                     try:
                         provider_stream = open_candidate(index, target)
@@ -406,9 +445,34 @@ class ProviderExecutor:
                                     candidate_index=index + 1,
                                     candidate_count=len(candidates),
                                 )
+                        usage.feed(chunk)
                         yield chunk
                         progress_deadline = loop.time() + self._progress_timeout_seconds
                 finally:
+                    if self._cooldowns is not None:
+                        if candidate_committed and candidate_failure is None:
+                            self._cooldowns.clear(target.provider_model_ref)
+                        elif (
+                            not candidate_committed
+                            and candidate_failure is not None
+                            and is_quota_failure(candidate_failure)
+                        ):
+                            self._cooldowns.mark(
+                                target.provider_model_ref,
+                                candidate_failure,
+                                seconds=self._cooldown_seconds,
+                            )
+                    if self._usage_ledger is not None:
+                        if candidate_committed:
+                            self._usage_ledger.record_usage(
+                                target.provider_model_ref,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                            )
+                        elif candidate_failure is not None:
+                            self._usage_ledger.record_failure(
+                                target.provider_model_ref, candidate_failure
+                            )
                     if provider_stream is not None:
                         active_error = sys.exception()
                         preserved_error = active_error or candidate_failure
@@ -436,6 +500,13 @@ class ProviderExecutor:
                 if candidate_committed or index + 1 >= len(candidates):
                     raise candidate_failure
                 next_target = candidates[index + 1]
+                if self._usage_ledger is not None:
+                    self._usage_ledger.record_fallback(
+                        request_id=request_id,
+                        from_model=target.provider_model_ref,
+                        to_model=next_target.provider_model_ref,
+                        failure=candidate_failure,
+                    )
                 self._trace_fallback_started(
                     request_id=request_id,
                     wire_api=wire_api,

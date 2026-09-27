@@ -138,6 +138,19 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "MODEL_COOLDOWN_SECONDS",
+        "Quota Cooldown Seconds",
+        "models",
+        "number",
+        settings_attr="model_cooldown_seconds",
+        description=(
+            "After a model hits a rate limit or exhausted quota (429/402), try it "
+            "last for this many seconds so requests go straight to the next "
+            "fallback. 0 disables."
+        ),
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "REASONING_POLICY",
         "Reasoning Policy",
         "reasoning",

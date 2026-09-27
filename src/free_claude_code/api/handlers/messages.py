@@ -36,10 +36,12 @@ from free_claude_code.api.web_tools.request import (
     unsupported_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
+from free_claude_code.application.usage import UsageLedger
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
@@ -82,6 +84,8 @@ class MessagesHandler:
         token_counter: TokenCounter = get_token_count,
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
+        usage_ledger: UsageLedger | None = None,
+        cooldowns: ModelCooldowns | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -92,6 +96,9 @@ class MessagesHandler:
             token_counter=token_counter,
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
+            usage_ledger=usage_ledger,
+            cooldowns=cooldowns,
+            cooldown_seconds=settings.model_cooldown_seconds,
         )
         self._message_intercepts: tuple[MessageIntercept, ...] = (
             self._intercept_web_server_tool,

@@ -379,6 +379,14 @@ class Settings(BaseModel):
         default=None,
         validation_alias="MODEL_FALLBACKS",
     )
+    # Seconds a model that hit a rate limit or exhausted quota is tried last.
+    model_cooldown_seconds: float = Field(
+        default=60.0,
+        ge=0,
+        le=86_400,
+        allow_inf_nan=False,
+        validation_alias="MODEL_COOLDOWN_SECONDS",
+    )
 
     # ==================== Per-Provider Proxy ====================
     openai_proxy: OptionalNonEmptyString = Field(

@@ -141,6 +141,25 @@ async def admin_status(
     return services.admin.admin_status()
 
 
+@router.get("/admin/api/usage")
+async def usage(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _no_store(_usage_payload(services))
+
+
+@router.post("/admin/api/usage/reset")
+async def reset_usage(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    services.usage.reset()
+    return _no_store(_usage_payload(services))
+
+
 @router.get("/admin/api/providers/local-status")
 async def local_provider_status(request: Request):
     require_loopback_admin(request)
@@ -322,6 +341,12 @@ def _require_connected_account_provider(provider_id: str) -> None:
             status_code=404,
             detail="Provider does not support connected-account login.",
         )
+
+
+def _usage_payload(services: ApiServices) -> JsonObject:
+    payload = services.usage.snapshot()
+    payload["cooldowns"] = services.cooldowns.snapshot()
+    return payload
 
 
 def _no_store(payload: JsonValue) -> JSONResponse:

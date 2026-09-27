@@ -12,7 +12,9 @@ import uvicorn
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.usage import UsageLedger
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
@@ -124,10 +126,26 @@ def _close_manager(manager: ProviderRuntimeManager) -> None:
 
 
 @pytest.fixture
+def admin_usage_ledger() -> UsageLedger:
+    """Token usage ledger shared with the served Admin application."""
+
+    return UsageLedger(clock=lambda: 1_767_225_600.0)
+
+
+@pytest.fixture
+def admin_cooldowns() -> ModelCooldowns:
+    """Quota cooldowns shared with the served Admin application."""
+
+    return ModelCooldowns()
+
+
+@pytest.fixture
 def admin_base_url(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    admin_usage_ledger: UsageLedger,
+    admin_cooldowns: ModelCooldowns,
 ) -> Iterator[str]:
     """Serve one fully isolated Admin application on an OS-assigned port."""
 
@@ -177,6 +195,8 @@ def admin_base_url(
             requests=manager,
             admin=runtime,
             tasks=runtime,
+            usage=admin_usage_ledger,
+            cooldowns=admin_cooldowns,
         )
     )
 
