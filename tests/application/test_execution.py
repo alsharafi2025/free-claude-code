@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import (
@@ -1273,3 +1274,133 @@ async def test_usage_ledger_keeps_partial_usage_when_committed_stream_fails() ->
         "output_tokens": 2,
         "total_tokens": 10,
     }
+
+
+def _rate_limit_failure() -> ExecutionFailure:
+    return ExecutionFailure(
+        kind=FailureKind.RATE_LIMIT,
+        status_code=429,
+        message="quota exhausted",
+        retryable=True,
+    )
+
+
+class _CountingProvider(_ScriptedProvider):
+    def __init__(self, chunks: tuple[str, ...], failure: ExecutionFailure | None):
+        super().__init__(chunks, failure)
+        self.calls = 0
+
+    async def stream_messages(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        self.calls += 1
+        async for chunk in super().stream_messages(
+            request,
+            input_tokens,
+            request_id=request_id,
+            response_model=response_model,
+            reasoning=reasoning,
+        ):
+            yield chunk
+
+
+async def _drain(executor: ProviderExecutor, request_id: str) -> list[str]:
+    return [
+        chunk
+        async for chunk in executor.stream_messages(
+            _routed_request(_target("fallback", "fallback-model")),
+            raw_log_payload={},
+            request_id=request_id,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_quota_failure_cools_primary_so_next_request_skips_it() -> None:
+    now = [0.0]
+    cooldowns = ModelCooldowns(clock=lambda: now[0])
+    primary = _CountingProvider((), _rate_limit_failure())
+    fallback = _CountingProvider((_USAGE_CHUNK,), None)
+    executor = ProviderExecutor(
+        lambda provider_id: {"provider": primary, "fallback": fallback}[provider_id],
+        progress_timeout_seconds=60.0,
+        cooldowns=cooldowns,
+        cooldown_seconds=30.0,
+    )
+
+    assert await _drain(executor, "req_1") == [_USAGE_CHUNK]
+    assert (primary.calls, fallback.calls) == (1, 1)
+    assert cooldowns.is_cooling("provider/provider-model")
+
+    assert await _drain(executor, "req_2") == [_USAGE_CHUNK]
+    assert (primary.calls, fallback.calls) == (1, 2)
+
+    now[0] = 31.0
+    assert await _drain(executor, "req_3") == [_USAGE_CHUNK]
+    assert (primary.calls, fallback.calls) == (2, 3)
+
+
+@pytest.mark.asyncio
+async def test_non_quota_failure_does_not_cool_down() -> None:
+    cooldowns = ModelCooldowns(clock=lambda: 0.0)
+    primary = _CountingProvider((), _execution_failure("overloaded"))
+    fallback = _CountingProvider((_USAGE_CHUNK,), None)
+    executor = ProviderExecutor(
+        lambda provider_id: {"provider": primary, "fallback": fallback}[provider_id],
+        progress_timeout_seconds=60.0,
+        cooldowns=cooldowns,
+        cooldown_seconds=30.0,
+    )
+
+    await _drain(executor, "req_1")
+    await _drain(executor, "req_2")
+
+    assert primary.calls == 2
+    assert cooldowns.snapshot() == []
+
+
+@pytest.mark.asyncio
+async def test_all_cooling_candidates_are_still_tried_and_success_clears() -> None:
+    cooldowns = ModelCooldowns(clock=lambda: 0.0)
+    cooldowns.mark("provider/provider-model", _rate_limit_failure(), seconds=60)
+    cooldowns.mark("fallback/fallback-model", _rate_limit_failure(), seconds=60)
+    primary = _CountingProvider((_USAGE_CHUNK,), None)
+    fallback = _CountingProvider((_USAGE_CHUNK,), None)
+    executor = ProviderExecutor(
+        lambda provider_id: {"provider": primary, "fallback": fallback}[provider_id],
+        progress_timeout_seconds=60.0,
+        cooldowns=cooldowns,
+        cooldown_seconds=60.0,
+    )
+
+    assert await _drain(executor, "req_all_cooling") == [_USAGE_CHUNK]
+
+    assert (primary.calls, fallback.calls) == (1, 0)
+    assert not cooldowns.is_cooling("provider/provider-model")
+    assert cooldowns.is_cooling("fallback/fallback-model")
+
+
+@pytest.mark.asyncio
+async def test_skipped_primary_is_not_preflighted_twice_when_fallback_serves() -> None:
+    cooldowns = ModelCooldowns(clock=lambda: 0.0)
+    cooldowns.mark("provider/provider-model", _rate_limit_failure(), seconds=60)
+    primary = _CountingProvider((), None)
+    fallback = _CountingProvider((_USAGE_CHUNK,), None)
+    executor = ProviderExecutor(
+        lambda provider_id: {"provider": primary, "fallback": fallback}[provider_id],
+        progress_timeout_seconds=60.0,
+        cooldowns=cooldowns,
+        cooldown_seconds=60.0,
+    )
+
+    await _drain(executor, "req_skip")
+
+    assert len(primary.preflight_calls) == 1
+    assert [call[0].model for call in fallback.preflight_calls] == ["fallback-model"]
+    assert primary.calls == 0

@@ -310,9 +310,9 @@ For example, route Opus to `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, Sonne
 <details>
 <summary><strong>Automatic fallback and token usage</strong></summary>
 
-Set `MODEL_FALLBACKS` (**Admin UI → Model Config**) to an ordered list of provider/model refs. When the selected model fails before producing output, for example a rate limit or an exhausted quota, FCC retries the same request on the next fallback.
+Set `MODEL_FALLBACKS` (**Admin UI → Model Config**) to an ordered list of provider/model refs. When the selected model fails before producing output, for example a rate limit or an exhausted quota, FCC retries the same request on the next fallback. A model that returns a rate limit or exhausted quota (429) or out of credits (402) is then tried last for `MODEL_COOLDOWN_SECONDS` (default 60, `0` disables), so later requests go straight to a working fallback instead of hitting the exhausted model again. If every model is cooling down, they are still tried in order.
 
-Open **Admin UI → Usage** to see input, output, and total tokens per provider/model, failed attempts, and the most recent automatic fallbacks. The same data is available locally at `GET /admin/api/usage`; `POST /admin/api/usage/reset` clears it. Counters live in memory and reset when the server restarts. Token counts come from the provider's reported usage when available, otherwise from FCC's estimate.
+Open **Admin UI → Usage** to see input, output, and total tokens per provider/model, failed attempts, the most recent automatic fallbacks, and which models are cooling down. The same data is available locally at `GET /admin/api/usage`; `POST /admin/api/usage/reset` clears it. Counters live in memory and reset when the server restarts. Token counts come from the provider's reported usage when available, otherwise from FCC's estimate.
 
 </details>
 

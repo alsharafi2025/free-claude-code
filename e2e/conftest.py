@@ -12,6 +12,7 @@ import uvicorn
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.usage import UsageLedger
 from free_claude_code.config import env_migrations, paths
@@ -132,11 +133,19 @@ def admin_usage_ledger() -> UsageLedger:
 
 
 @pytest.fixture
+def admin_cooldowns() -> ModelCooldowns:
+    """Quota cooldowns shared with the served Admin application."""
+
+    return ModelCooldowns()
+
+
+@pytest.fixture
 def admin_base_url(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     admin_usage_ledger: UsageLedger,
+    admin_cooldowns: ModelCooldowns,
 ) -> Iterator[str]:
     """Serve one fully isolated Admin application on an OS-assigned port."""
 
@@ -187,6 +196,7 @@ def admin_base_url(
             admin=runtime,
             tasks=runtime,
             usage=admin_usage_ledger,
+            cooldowns=admin_cooldowns,
         )
     )
 

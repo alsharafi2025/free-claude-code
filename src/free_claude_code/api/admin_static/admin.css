@@ -333,6 +333,10 @@ textarea:focus-visible,
   color: var(--warn);
 }
 
+.usage-ok {
+  color: var(--ok);
+}
+
 .usage-empty {
   color: var(--muted);
   text-align: center !important;

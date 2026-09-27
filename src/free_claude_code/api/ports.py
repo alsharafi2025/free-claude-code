@@ -8,6 +8,7 @@ from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountStatus,
 )
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import RequestRuntimePort, TaskController
 from free_claude_code.application.usage import UsageLedger
@@ -57,3 +58,4 @@ class ApiServices:
     admin: AdminRuntimePort
     tasks: TaskController
     usage: UsageLedger = field(default_factory=UsageLedger)
+    cooldowns: ModelCooldowns = field(default_factory=ModelCooldowns)

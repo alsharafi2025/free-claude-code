@@ -36,6 +36,7 @@ from free_claude_code.api.web_tools.request import (
     unsupported_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.ports import ProviderResolver
@@ -84,6 +85,7 @@ class MessagesHandler:
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
         usage_ledger: UsageLedger | None = None,
+        cooldowns: ModelCooldowns | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -95,6 +97,8 @@ class MessagesHandler:
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
             usage_ledger=usage_ledger,
+            cooldowns=cooldowns,
+            cooldown_seconds=settings.model_cooldown_seconds,
         )
         self._message_intercepts: tuple[MessageIntercept, ...] = (
             self._intercept_web_server_tool,

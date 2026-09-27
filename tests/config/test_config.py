@@ -43,6 +43,7 @@ def test_settings_defaults_are_valid_and_nonempty() -> None:
     assert settings.provider_rate_window == 2
     assert settings.provider_max_concurrency == 2
     assert settings.provider_progress_timeout == 600.0
+    assert settings.model_cooldown_seconds == 60.0
     assert settings.http_read_timeout == 120.0
     assert settings.http_write_timeout == 10.0
     assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
@@ -129,6 +130,18 @@ def test_process_values_are_parsed_at_the_loader_boundary(
 def test_provider_progress_timeout_must_be_representable(value: float) -> None:
     with pytest.raises(ValidationError):
         Settings(provider_progress_timeout=value)
+
+
+@pytest.mark.parametrize("value", ["-1", "inf", "nan", "86401"])
+def test_loader_rejects_invalid_model_cooldown_seconds(value: str) -> None:
+    with pytest.raises(ValidationError):
+        compose_settings_snapshot({}, {"MODEL_COOLDOWN_SECONDS": value})
+
+
+def test_model_cooldown_seconds_accepts_zero_to_disable() -> None:
+    snapshot = compose_settings_snapshot({}, {"MODEL_COOLDOWN_SECONDS": "0"})
+
+    assert snapshot.settings.model_cooldown_seconds == 0.0
 
 
 @pytest.mark.parametrize(

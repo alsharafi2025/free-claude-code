@@ -2,6 +2,7 @@
 
 from playwright.sync_api import Page, expect
 
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.usage import UsageLedger
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 
@@ -71,3 +72,28 @@ def test_usage_reset_clears_rendered_counters(
     expect(page.locator("#usageModels")).to_have_text("No requests yet")
     expect(page.locator("#usageFallbacks")).to_have_text("No fallbacks yet")
     expect(page.locator("#usageTotals .usage-stat").first).to_contain_text("0")
+
+
+def test_usage_view_shows_quota_cooldown_status(
+    page: Page,
+    admin_base_url: str,
+    admin_cooldowns: ModelCooldowns,
+) -> None:
+    admin_cooldowns.mark(
+        "open_router/vendor/model-a",
+        ExecutionFailure(
+            kind=FailureKind.RATE_LIMIT,
+            status_code=429,
+            message="quota exhausted",
+            retryable=True,
+        ),
+        seconds=600,
+    )
+
+    _open_usage(page, admin_base_url)
+
+    row = page.locator("#usageModels tr")
+    expect(row).to_have_count(1)
+    expect(row).to_contain_text("open_router/vendor/model-a")
+    expect(row).to_contain_text("Cooling down until")
+    expect(row).to_contain_text("(429)")

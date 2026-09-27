@@ -13,6 +13,7 @@ from free_claude_code.api.response_streams import (
     terminal_execution_error_response,
     trace_terminal_execution_error,
 )
+from free_claude_code.application.cooldown import ModelCooldowns
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.ports import ProviderResolver
@@ -42,6 +43,7 @@ class ResponsesHandler:
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
         usage_ledger: UsageLedger | None = None,
+        cooldowns: ModelCooldowns | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -51,6 +53,8 @@ class ResponsesHandler:
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
             usage_ledger=usage_ledger,
+            cooldowns=cooldowns,
+            cooldown_seconds=settings.model_cooldown_seconds,
         )
 
     async def create(

@@ -93,3 +93,22 @@ def test_usage_admin_api_is_local_only() -> None:
 
     assert client.get("/admin/api/usage").status_code == 403
     assert client.post("/admin/api/usage/reset").status_code == 403
+
+
+def test_quota_limited_primary_is_skipped_on_next_request() -> None:
+    primary = ControlledFallbackProvider(failure=_quota_exhausted())
+    fallback = ControlledFallbackProvider(text="fallback worked")
+
+    with fallback_client(primary, fallback) as client:
+        first = client.post("/v1/messages", json=messages_payload(stream=True))
+        second = client.post("/v1/messages", json=messages_payload(stream=True))
+        body = _admin_client(client).get("/admin/api/usage").json()
+
+    assert first.status_code == second.status_code == 200
+    assert "fallback worked" in second.text
+    assert primary.stream_models == ["primary-model"]
+    assert fallback.stream_models == ["fallback-model", "fallback-model"]
+    [cooldown] = body["cooldowns"]
+    assert cooldown["model"] == "nvidia_nim/primary-model"
+    assert (cooldown["failure_kind"], cooldown["status_code"]) == ("rate_limit", 429)
+    assert body["totals"]["fallbacks"] == 1

@@ -197,6 +197,12 @@ function usageCell(text, className = "") {
   return cell;
 }
 
+function usageStatusCell(cooldown) {
+  if (!cooldown) return usageCell("Available", "usage-ok");
+  const until = new Date(cooldown.until * 1000).toLocaleTimeString();
+  return usageCell(`Cooling down until ${until} (${cooldown.status_code})`, "usage-warn");
+}
+
 function renderUsage(usage) {
   byId("usageSince").textContent = `Since ${formatTime(usage.since)} (resets when the server restarts)`;
   const totals = byId("usageTotals");
@@ -221,13 +227,28 @@ function renderUsage(usage) {
 
   const models = byId("usageModels");
   models.innerHTML = "";
-  if (usage.models.length === 0) {
+  const cooldowns = new Map((usage.cooldowns || []).map((row) => [row.model, row]));
+  const modelRows = [...usage.models];
+  cooldowns.forEach((row, model) => {
+    if (!modelRows.some((entry) => entry.model === model)) {
+      modelRows.push({
+        model,
+        requests: 0,
+        failures: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        last_failure_kind: null,
+      });
+    }
+  });
+  if (modelRows.length === 0) {
     const row = document.createElement("tr");
     row.appendChild(usageCell("No requests yet", "usage-empty"));
-    row.firstChild.colSpan = 6;
+    row.firstChild.colSpan = 7;
     models.appendChild(row);
   }
-  usage.models.forEach((model) => {
+  modelRows.forEach((model) => {
     const row = document.createElement("tr");
     const failures = model.last_failure_kind
       ? `${model.failures} (${model.last_failure_kind})`
@@ -239,6 +260,7 @@ function renderUsage(usage) {
       usageCell(formatTokens(model.input_tokens)),
       usageCell(formatTokens(model.output_tokens)),
       usageCell(formatTokens(model.total_tokens)),
+      usageStatusCell(cooldowns.get(model.model)),
     );
     models.appendChild(row);
   });
