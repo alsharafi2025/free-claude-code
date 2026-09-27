@@ -254,6 +254,90 @@ textarea:focus-visible,
   margin: 4px 0 0 0;
 }
 
+/* Usage view */
+.usage-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 4px 0 0 0;
+}
+
+.usage-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.usage-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: var(--card);
+}
+
+.usage-stat strong {
+  color: var(--text-strong);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-stat span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.usage-table-wrap {
+  overflow-x: auto;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.usage-table th,
+.usage-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.usage-table th:first-child,
+.usage-table td:first-child,
+.usage-table-text th,
+.usage-table-text td {
+  text-align: left;
+}
+
+.usage-model {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.usage-warn {
+  color: var(--warn);
+}
+
+.usage-empty {
+  color: var(--muted);
+  text-align: center !important;
+}
+
 /* Provider Status Cards */
 .provider-grid {
   display: grid;

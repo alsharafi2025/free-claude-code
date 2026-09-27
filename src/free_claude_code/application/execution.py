@@ -34,6 +34,7 @@ from .routing import (
     RoutedMessagesRequest,
     RoutedResponsesRequest,
 )
+from .usage import StreamUsageObserver, UsageLedger
 
 TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
@@ -56,6 +57,7 @@ class ProviderExecutor:
         responses_token_counter: ResponsesTokenCounter = estimate_responses_input_tokens,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
+        usage_ledger: UsageLedger | None = None,
     ) -> None:
         if not math.isfinite(progress_timeout_seconds) or progress_timeout_seconds <= 0:
             raise ValueError("progress_timeout_seconds must be finite and positive")
@@ -64,6 +66,7 @@ class ProviderExecutor:
         self._responses_token_counter = responses_token_counter
         self._generation_id = generation_id
         self._log_raw_payloads = log_raw_payloads
+        self._usage_ledger = usage_ledger
         self._progress_timeout_seconds = float(progress_timeout_seconds)
 
     def _progress_timeout_failure(
@@ -352,6 +355,7 @@ class ProviderExecutor:
                 provider_stream: AsyncIterator[str] | None = None
                 candidate_committed = False
                 candidate_failure: ExecutionFailure | None = None
+                usage = StreamUsageObserver()
                 try:
                     try:
                         provider_stream = open_candidate(index, target)
@@ -406,9 +410,21 @@ class ProviderExecutor:
                                     candidate_index=index + 1,
                                     candidate_count=len(candidates),
                                 )
+                        usage.feed(chunk)
                         yield chunk
                         progress_deadline = loop.time() + self._progress_timeout_seconds
                 finally:
+                    if self._usage_ledger is not None:
+                        if candidate_committed:
+                            self._usage_ledger.record_usage(
+                                target.provider_model_ref,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                            )
+                        elif candidate_failure is not None:
+                            self._usage_ledger.record_failure(
+                                target.provider_model_ref, candidate_failure
+                            )
                     if provider_stream is not None:
                         active_error = sys.exception()
                         preserved_error = active_error or candidate_failure
@@ -436,6 +452,13 @@ class ProviderExecutor:
                 if candidate_committed or index + 1 >= len(candidates):
                     raise candidate_failure
                 next_target = candidates[index + 1]
+                if self._usage_ledger is not None:
+                    self._usage_ledger.record_fallback(
+                        request_id=request_id,
+                        from_model=target.provider_model_ref,
+                        to_model=next_target.provider_model_ref,
+                        failure=candidate_failure,
+                    )
                 self._trace_fallback_started(
                     request_id=request_id,
                     wire_api=wire_api,

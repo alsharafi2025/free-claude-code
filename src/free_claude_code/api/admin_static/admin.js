@@ -5,6 +5,7 @@ const state = {
   modelComboboxes: new Set(),
   authPollers: new Map(),
   activeView: "providers",
+  usageTimer: null,
 };
 
 const MASKED_SECRET = "********";
@@ -30,6 +31,13 @@ const VIEW_GROUPS = [
     title: "Messaging",
     sections: ["messaging", "voice"],
     containerId: "messagingSections",
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    title: "Usage",
+    sections: [],
+    containerId: "usageSections",
   },
 ];
 
@@ -144,6 +152,115 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+  syncUsagePolling();
+}
+
+function syncUsagePolling() {
+  const active = state.activeView === "usage";
+  if (active && state.usageTimer === null) {
+    refreshUsage();
+    state.usageTimer = window.setInterval(refreshUsage, 5000);
+  } else if (!active && state.usageTimer !== null) {
+    window.clearInterval(state.usageTimer);
+    state.usageTimer = null;
+  }
+}
+
+async function refreshUsage() {
+  try {
+    renderUsage(await api("/admin/api/usage"));
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function resetUsage() {
+  try {
+    renderUsage(await api("/admin/api/usage/reset", { method: "POST" }));
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+function formatTokens(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatTime(seconds) {
+  return seconds ? new Date(seconds * 1000).toLocaleString() : "";
+}
+
+function usageCell(text, className = "") {
+  const cell = document.createElement("td");
+  cell.textContent = text;
+  if (className) cell.className = className;
+  return cell;
+}
+
+function renderUsage(usage) {
+  byId("usageSince").textContent = `Since ${formatTime(usage.since)} (resets when the server restarts)`;
+  const totals = byId("usageTotals");
+  totals.innerHTML = "";
+  [
+    ["Total tokens", formatTokens(usage.totals.total_tokens)],
+    ["Input tokens", formatTokens(usage.totals.input_tokens)],
+    ["Output tokens", formatTokens(usage.totals.output_tokens)],
+    ["Requests", formatTokens(usage.totals.requests)],
+    ["Failed attempts", formatTokens(usage.totals.failures)],
+    ["Fallbacks", formatTokens(usage.totals.fallbacks)],
+  ].forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = "usage-stat";
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = value;
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    card.append(valueEl, labelEl);
+    totals.appendChild(card);
+  });
+
+  const models = byId("usageModels");
+  models.innerHTML = "";
+  if (usage.models.length === 0) {
+    const row = document.createElement("tr");
+    row.appendChild(usageCell("No requests yet", "usage-empty"));
+    row.firstChild.colSpan = 6;
+    models.appendChild(row);
+  }
+  usage.models.forEach((model) => {
+    const row = document.createElement("tr");
+    const failures = model.last_failure_kind
+      ? `${model.failures} (${model.last_failure_kind})`
+      : String(model.failures);
+    row.append(
+      usageCell(model.model, "usage-model"),
+      usageCell(formatTokens(model.requests)),
+      usageCell(failures, model.failures ? "usage-warn" : ""),
+      usageCell(formatTokens(model.input_tokens)),
+      usageCell(formatTokens(model.output_tokens)),
+      usageCell(formatTokens(model.total_tokens)),
+    );
+    models.appendChild(row);
+  });
+
+  const fallbacks = byId("usageFallbacks");
+  fallbacks.innerHTML = "";
+  if (usage.recent_fallbacks.length === 0) {
+    const row = document.createElement("tr");
+    row.appendChild(usageCell("No fallbacks yet", "usage-empty"));
+    row.firstChild.colSpan = 4;
+    fallbacks.appendChild(row);
+  }
+  usage.recent_fallbacks.forEach((event) => {
+    const row = document.createElement("tr");
+    row.append(
+      usageCell(formatTime(event.at)),
+      usageCell(event.from_model, "usage-model"),
+      usageCell(event.to_model, "usage-model"),
+      usageCell(`${event.failure_kind} (${event.status_code})`, "usage-warn"),
+    );
+    fallbacks.appendChild(row);
+  });
 }
 
 function renderProviders(providerStatus) {
@@ -1197,6 +1314,8 @@ function showMessage(message, kind = "") {
 
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
+byId("usageRefreshButton").addEventListener("click", refreshUsage);
+byId("usageResetButton").addEventListener("click", resetUsage);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();

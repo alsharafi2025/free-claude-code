@@ -14,6 +14,7 @@ from free_claude_code.application.routing import (
     RoutedMessagesRequest,
     RoutedResponsesRequest,
 )
+from free_claude_code.application.usage import UsageLedger
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.async_iterators import AsyncCloseable
@@ -1183,3 +1184,92 @@ async def test_cancelling_progress_wait_remains_cancellation() -> None:
 
     assert provider.stream_close_calls == 1
     assert resolved_ids == ["provider"]
+
+
+class _ScriptedProvider(FakeProvider):
+    def __init__(self, chunks: tuple[str, ...], failure: ExecutionFailure | None):
+        super().__init__()
+        self._chunks = chunks
+        self._failure = failure
+
+    async def stream_messages(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        for chunk in self._chunks:
+            yield chunk
+        if self._failure is not None:
+            raise self._failure
+
+
+_USAGE_CHUNK = (
+    'event: message_delta\ndata: {"type": "message_delta", '
+    '"usage": {"input_tokens": 8, "output_tokens": 2}}\n\n'
+)
+
+
+@pytest.mark.asyncio
+async def test_usage_ledger_records_failure_fallback_and_serving_usage() -> None:
+    ledger = UsageLedger(clock=lambda: 1.0)
+    primary = _ScriptedProvider((), _execution_failure("quota"))
+    fallback = _ScriptedProvider((_USAGE_CHUNK,), None)
+    executor = ProviderExecutor(
+        lambda provider_id: {"provider": primary, "fallback": fallback}[provider_id],
+        progress_timeout_seconds=60.0,
+        usage_ledger=ledger,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in executor.stream_messages(
+            _routed_request(_target("fallback", "fallback-model")),
+            raw_log_payload={},
+            request_id="req_usage",
+        )
+    ]
+
+    assert chunks == [_USAGE_CHUNK]
+    snapshot = ledger.snapshot()
+    assert snapshot["totals"] == {
+        "requests": 1,
+        "failures": 1,
+        "fallbacks": 1,
+        "input_tokens": 8,
+        "output_tokens": 2,
+        "total_tokens": 10,
+    }
+
+
+@pytest.mark.asyncio
+async def test_usage_ledger_keeps_partial_usage_when_committed_stream_fails() -> None:
+    ledger = UsageLedger()
+    primary = _ScriptedProvider((_USAGE_CHUNK,), _execution_failure("mid-stream"))
+    fallback = _ScriptedProvider((_USAGE_CHUNK,), None)
+    executor = ProviderExecutor(
+        lambda provider_id: {"provider": primary, "fallback": fallback}[provider_id],
+        progress_timeout_seconds=60.0,
+        usage_ledger=ledger,
+    )
+
+    with pytest.raises(ExecutionFailure, match="mid-stream"):
+        async for _chunk in executor.stream_messages(
+            _routed_request(_target("fallback", "fallback-model")),
+            raw_log_payload={},
+            request_id="req_partial",
+        ):
+            pass
+
+    snapshot = ledger.snapshot()
+    assert snapshot["totals"] == {
+        "requests": 1,
+        "failures": 0,
+        "fallbacks": 0,
+        "input_tokens": 8,
+        "output_tokens": 2,
+        "total_tokens": 10,
+    }

@@ -17,6 +17,7 @@ from free_claude_code.application.errors import ApplicationError, InvalidRequest
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter
+from free_claude_code.application.usage import UsageLedger
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
@@ -40,6 +41,7 @@ class ResponsesHandler:
         model_router: ModelRouter | None = None,
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
+        usage_ledger: UsageLedger | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -48,6 +50,7 @@ class ResponsesHandler:
             progress_timeout_seconds=settings.provider_progress_timeout,
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
+            usage_ledger=usage_ledger,
         )
 
     async def create(

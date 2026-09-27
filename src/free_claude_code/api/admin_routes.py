@@ -141,6 +141,25 @@ async def admin_status(
     return services.admin.admin_status()
 
 
+@router.get("/admin/api/usage")
+async def usage(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _no_store(services.usage.snapshot())
+
+
+@router.post("/admin/api/usage/reset")
+async def reset_usage(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    services.usage.reset()
+    return _no_store(services.usage.snapshot())
+
+
 @router.get("/admin/api/providers/local-status")
 async def local_provider_status(request: Request):
     require_loopback_admin(request)
